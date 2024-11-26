@@ -11,10 +11,12 @@ res1 <- summarize.iterations(DATASET_PATH, "1")
 
 res2 <- summarize.all(DATASET_PATH, "1")
 
-pairwise.occurrences(DATASET_PATH, "1", pwidth, pheight)
+#pairwise.occurrences(DATASET_PATH, "1", pwidth, pheight)
 
-plot.confusion.matrix(DATASET_PATH, "1", pwidth, pheight)
-
-latex.summary(DATASET_PATH, "1")
+#plot.confusion.matrix(DATASET_PATH, "1", pwidth, pheight)
 
 plot.scatter(DATASET_PATH)
+
+plot.allInOne(DATASET_PATH, "1", 10, 5)
+
+latex.summary(DATASET_PATH, "1")

@@ -3,6 +3,8 @@ library(ggplot2)
 library(kableExtra)
 library(ggpubr)
 library(ggrepel)
+library(gridExtra)
+
 
 coverage <- function(gt, ps){
   # Computes the conformal coverage.
@@ -30,6 +32,7 @@ coverage <- function(gt, ps){
 avg.set.size <- function(ps){
   # Compute the average set size.
   # ps: prediction set.
+  # Also known as N criterion.
   
   n <- length(ps)
   
@@ -92,6 +95,147 @@ observed.unconfidence <- function(gt, ps, pvalues, labels.order){
   return(acum/count)
 }
 
+observed.excess <- function(gt, ps){
+  # OE.
+  # Smaller is better.
+  # Counts empty set as false label.
+  
+  n <- length(gt)
+  
+  acum <- 0
+  
+  for(i in 1:n){
+    
+    parts <- strsplit(ps[i], "\\|")[[1]]
+    
+    false.labels.count <- sum(!parts %in% gt[i])
+    
+    acum <- acum + false.labels.count
+  }
+  
+  return(acum/n)
+}
+
+average.fuzziness <- function(pvalues){
+  # F criterion.
+  # Smaller values are preferred.
+  
+  n <- length(pvalues)
+  
+  acum <- 0
+  
+  for(i in 1:n){
+    
+    pvs <- as.numeric(strsplit(pvalues[i], "\\|")[[1]])
+    
+    acum <- acum + sum(sort(pvs, decreasing = T)[-1])
+  }
+  
+  return(acum/n)
+}
+
+pct.m.criterion <- function(ps){
+  # M criterion.
+  # Smaller values are preferred.
+  # Discards empty sets.
+  
+  n <- length(ps)
+  
+  acum <- 0
+  
+  count <- 0
+  
+  for(i in 1:n){
+    
+    parts <- strsplit(ps[i], "\\|")[[1]]
+    
+    if(length(parts) == 0){
+      next
+    }
+    else{
+      count <- count + 1
+      if(length(parts) > 1){
+        acum <- acum + 1
+      }
+    }
+    
+  }
+  
+  return(acum/count)
+  
+}
+
+om.criterion <- function(gt, ps){
+  # OM.
+  # Small values are preferred.
+  # Discard empty sets.
+  
+  n <- length(gt)
+  
+  acum <- 0
+  
+  count <- 0
+  
+  for(i in 1:n){
+    
+    parts <- strsplit(ps[i], "\\|")[[1]]
+    
+    if(length(parts) == 0){
+      next
+    }
+    else{
+      
+      count <- count + 1
+      
+      false.labels.count <- sum(!parts %in% gt[i])
+      
+      if(false.labels.count > 1)false.labels.count <- 1;
+      
+      acum <- acum + false.labels.count
+    }
+  }
+  
+  return(acum/count)
+}
+
+observed.fuzziness <- function(gt, ps, pvalues, labels.order){
+  # OF
+  # Smaller are preferred.
+  # Omits empty sets.
+  
+  n <- length(gt)
+  
+  acum <- 0
+  
+  count <- 0
+  
+  for(i in 1:n){
+    
+    parts <- strsplit(ps[i], "\\|")[[1]]
+    
+    if(length(parts) == 0){
+      next
+    }
+    else{
+      count <- count + 1
+      
+      false.labels <- parts[!parts %in% gt[i]]
+      
+      if(length(false.labels) == 0){
+        next
+      }
+      else{
+        pvs <- as.numeric(strsplit(pvalues[i], "\\|")[[1]])
+        
+        acum <- acum + sum(pvs[labels.order %in% false.labels])
+      }
+    }
+    
+  }
+  
+  return(acum/count)
+}
+
 summarize.iterations <- function(dataset_path, model.type){
   # Function to summarize the results per iteration.
   
@@ -137,6 +281,16 @@ summarize.iterations <- function(dataset_path, model.type){
       
       OU <- observed.unconfidence(df$groundTruth, df$predictionSet, df$pvalues, labels.order)
       
+      OE <- observed.excess(df$groundTruth, df$predictionSet)
+      
+      f.criterion <- average.fuzziness(df$pvalues)
+      
+      m.criterion <- pct.m.criterion(df$predictionSet)
+      
+      OM <- om.criterion(df$groundTruth, df$predictionSet)
+      
+      OF <- observed.fuzziness(df$groundTruth, df$predictionSet, df$pvalues, labels.order)
+      
       tmp <- data.frame(it=i,
                         method=m, 
                         accuracy=acc,
@@ -145,8 +299,13 @@ summarize.iterations <- function(dataset_path, model.type){
                         F1=f1,
                         coverage=cvg,
                         setsize=setsize,
-                        OU,
                         pctempty=pctempty,
+                        MCriterion=m.criterion,
+                        FCriterion=f.criterion,
+                        OM=OM,
+                        OF=OF,
+                        OU,
+                        OE,
                         row.names = NULL)
       
       summary <- rbind(summary, tmp)
@@ -199,7 +358,6 @@ summarize.all <- function(dataset_path, model.type){
   return(summary)
   
 }
-
 
 pairwise.occurrences <- function(dataset_path, model.type, width=5, height=5){
   # Function to generate a plot of label co-occurrences in the sets.
@@ -352,7 +510,7 @@ plot.confusion.matrix.aux <- function(dataset_path, model.type, width=5, height=
 
 plot.confusion.matrix <- function(dataset_path, model.type, width=5, height=5, diag0 = F){
   # This function calls the same function twice
-  # to generate two confusion matrices. Normal and with Diagonal set to 0.
+  # to generate two confuson matrices. Normal and with Diag set to 0.
   plot.confusion.matrix.aux(dataset_path, model.type, width, height, diag0 = F)
   plot.confusion.matrix.aux(dataset_path, model.type, width, height, diag0 = T)
 }
@@ -363,6 +521,8 @@ latex.summary <- function(dataset_path, model.type){
   results <- read.csv(paste0(dataset_path,"results_",model.type,"//summary_all.csv"))
   
   # Which metrics are to be multiplied by 100.
+  #m <- c("accuracy","sensitivity","specificity","F1","coverage","pctempty")
+  
   m <- c("accuracy|sensitivity|specificity|F1|coverage|pctempty")
   
   idxs <- grepl(m,colnames(results))
@@ -414,6 +574,8 @@ plot.scatter <- function(dataset_path){
   
   df <- results[,c(1,6,7)]
   
+  #rownames(df) <- results$method
+  
   p <- ggplot(df, aes(mean_coverage,mean_setsize)) +
     geom_point() +
     geom_text_repel(aes(label = method))
@@ -425,3 +587,140 @@ plot.scatter <- function(dataset_path){
   
 }
 
+plot.boxplots <- function(dataset_path){
+  
+  results <- read.csv(paste0(dataset_path,"results_1//summary_iterations.csv"))
+  
+  boxplot(results$coverage~results$method)
+  
+  #pdf(paste0(dataset_path,"results_1//boxplots.pdf"), 4, 4)
+  #print(p)
+  #dev.off()
+  
+}
+
+plot.allInOne <- function(dataset_path, model.type, width=5, height=5){
+  
+  # Function to generate a plot of label co-occurrences in the sets.
+  
+  # Read results.
+  results <- read.csv(paste0(dataset_path,"results_",model.type,"//results.csv"))
+  
+  methods <- unique(results$method)
+  
+  for(m in methods){
+    
+    df <- results[results$method==m, ]
+    all.labels <- sort(unique(df$groundTruth))
+    ps <- strsplit(df$predictionSet, "\\|")
+    n <- length(ps)
+    
+    # Create the co-occurrence matrix
+    C <- matrix(data = rep(0, length(all.labels)^2),
+                nrow = length(all.labels), 
+                dimnames = list(row=all.labels, col=all.labels))
+    
+    
+    for(i in 1:n){
+      s <- ps[i][[1]]
+      n2 <- length(s)
+      if(n2 < 2)next;
+      
+      for(j in 1:(n2-1)){
+        for(k in (j+1):n2){
+          a <- s[j]; b <- s[k]
+          C[a,b] <- C[a,b] + 1
+          C[b,a] <- C[b,a] + 1
+        }
+      }
+    }
+    
+    # Plot the matrix.
+    noClasses <- length(all.labels)
+    tamletras <- 12
+    tamnums <- 3.5
+    
+    if(noClasses==20){
+      tamnums <- 1.7
+    }
+    
+    levels <- all.labels
+    
+    M <- C
+    
+    for(col in 1:noClasses){total <- sum(M[,col]);for(row in 1:noClasses){M[row,col] <- M[row,col] / total}}
+    
+    M[is.na(M)] <- 0.0
+    
+    z <- matrix(M, ncol=length(levels), byrow=TRUE, dimnames=list(levels,levels))
+    confusion <- as.data.frame(as.table(z))
+    
+    plot1 <- ggplot()
+    plot1 <- plot1 + geom_tile(aes(x=Var1, y=Var2, fill=Freq), data=confusion, color="black", linewidth=0.1) +
+      ggtitle("a) co-occurrence matrix") +
+      labs(x=expression(""), y=expression("")) +
+      geom_text(aes(x=Var1,y=Var2, label=sprintf("%.3f", Freq)),data=confusion, size=tamnums, colour="black") +
+      scale_fill_gradient(low="white", high="pink", name="counts")+
+      theme(axis.text=element_text(colour="black", size =tamletras),
+            axis.title = element_text(face="bold", colour="black", size=9),
+            axis.text.x = element_text(angle = 45, hjust = 1),
+            legend.position="none", plot.margin = unit(c(.1,.1,.1,.1),"cm"), plot.title = element_text(size = 12, face = "bold", hjust = 0.5))
+  
+    #### Plot zero diagonal confusion matrix.
+      df <- results[results$method==m, ]
+      
+      all.labels <- sort(unique(df$groundTruth))
+      
+      M <- confusionMatrix(factor(df$prediction,all.labels),
+                           factor(df$groundTruth,all.labels))$table
+      n <- all.labels
+      noClasses <- length(all.labels)
+      tamletras <- 12
+      tamnums <- 3.5
+      
+      if(noClasses==20){
+        tamnums <- 1.7
+      }
+      
+      # Set diagonal to 0
+      diag(M) <- 0
+      
+      for(col in 1:noClasses){total <- sum(M[,col]);for(row in 1:noClasses){M[row,col] <- M[row,col] / total}}
+      
+      M[is.na(M)] <- 0.0
+      
+      z <- matrix(M, ncol=noClasses, byrow=TRUE, dimnames=list(n,n))
+      confusion <- as.data.frame(as.table(z))
+      
+      squarecolor <- "lightblue"
+      thetitle <- "b) zero diagonal confusion matrix"
+      
+      plot2 <- ggplot()
+      plot2 <- plot1 + geom_tile(aes(x=Var1, y=Var2, fill=Freq), data=confusion, color="black", linewidth=0.1) + 
+        ggtitle(thetitle) +
+        labs(x=expression(atop("True classes")), y=expression("Predicted classes")) +
+        geom_text(aes(x=Var1,y=Var2, label=sprintf("%.3f", Freq)),data=confusion, size=tamnums, colour="black") +
+        scale_fill_gradient(low="white", high=squarecolor, name="counts(%)")+
+        theme(axis.text=element_text(colour="black", size =tamletras), 
+              axis.title = element_text(face="bold", colour="black", size=9),
+              axis.text.x = element_text(angle = 45, hjust = 1),
+              legend.position="none", plot.margin = unit(c(.1,.1,.1,.1),"cm"), plot.title = element_text(size = 12, face = "bold", hjust = 0.5))
+      
+      #pdf(paste0(dataset_path,"results_",model.type,"//",fprefix,m,"_",model.type,".pdf"),
+      #    width=width, height=height)
+      #print(plot1)
+      #dev.off()
+    
+
+  allplots <- ggarrange(plot1, plot2, ncol = 2, nrow = 1)
+  
+  #allplots <- arrangeGrob(plot1, plot2, plot3, ncol=3)
+  #ggsave("results_",model.type,"//all",m,"_",model.type,".pdf",allplots)
+  
+  pdf(paste0(dataset_path,"results_",model.type,"//all_",m,"_",model.type,".pdf"),
+      width=width, height=height)
+  print(allplots)
+  dev.off()
+  }
+  
+}
